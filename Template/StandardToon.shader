@@ -1,0 +1,200 @@
+Shader "Unlit/StandardToon"
+{
+    Properties
+    {
+        [Header(Sample Map)]
+		[Space(15)]
+        _BaseMap ("Base Map", 2D) = "white" {}
+        _NormalMap ("Normal Map", 2D) = "white" {}
+        _AOMap("AO Map", 2D) = "white" {}
+        _DiffuseRamp("Ramp", 2D) = "white" {}
+        _RampTex("Color Ramp", 2D) = "white" {}
+        _SpecMap("Specular Map", 2D) = "white" {}
+        [MaterialToggle(_NORMALMAP_ON)] _Toggle("HasNormal?", Float) = 0
+
+        [Header(Shadow)]
+		[Space(15)]
+        _TintLayer1_Offset("TintLayer1_Offset",float)=0.5
+        _TintLayer2_Offset("TintLayer2_Offset",float)=0.5
+        
+        _TintLayer1_Softness("TintLayer1_Softness",Range(0,1))=0.5
+        _TintLayer2_Softness("TintLayer2_Softness",Range(0,1))=0.3
+
+        _RimMin("Rim Min",float)=0.5
+        _RimMax("Rim Max",float)=0.5
+        
+        _ShadowTint1("Shadow Tint 1",Color)=(1,1,1,1)
+        _ShadowTint2("Shadow Tint 2",Color)=(1,1,1,1)
+
+        [Header(Specular)]
+		[Space(15)]
+        _SpecSmoothness("Spec Smothness",float)=0.5
+        _SpecIntensity("Spec Intensity",float)=0.5
+        _SpecColor("Spec Color",Color)=(1,1,1,1)
+
+        [Header(Specular)]
+		[Space(15)]
+        _FresnelMin("Fresnel Min",float)=0.5
+        _FresnelMax("Fresnel Max",float)=0.5
+        
+        [Header(Ambient)]
+		[Space(15)]
+        _Roughness("Roughness",Range(0,1))=0.5
+        _EnvMap("Evn Map",Cube)="white"{}
+        _EnvIntensity("Env Intensity",float)=0.5
+    }
+    SubShader
+    {
+        Tags { "RenderType"="Opaque" "LightMode"="UniversalForward"}
+        LOD 100
+
+        Pass
+        {
+            CGPROGRAM
+            #pragma vertex vert
+            #pragma fragment frag
+            #pragma multi_compile_fwdbase
+            #pragma multi_compile _NORMALMAP_OFF _NORMALMAP_ON
+
+            #include "UnityCG.cginc"
+            #include "AutoLight.cginc"
+
+            struct appdata
+            {
+                float4 vertex : POSITION;
+                float2 uv : TEXCOORD0;
+                float2 texcoord1:TEXCOORD1;
+                float3 normal:NORMAL;
+                float4 tangent:TANGENT;
+                float4 color:COLOR;
+                
+            };
+
+            struct v2f
+            {
+                float2 uv : TEXCOORD0;
+                float4 vertex : SV_POSITION;
+
+                float3 normalDir:TEXCOORD1;
+                float3 tangentDir:TEXCOORD2;
+                float3 binormalDir: TEXCOORD3;
+                float3 pos_world:TEXCOORD4;
+                float4 vertexColor:TEXCOORD5;
+
+            };
+
+            sampler2D _BaseMap;
+            float4 _BaseMap_ST;
+            sampler2D _NormalMap;
+            sampler2D _AOMap;
+            sampler2D _DiffuseRamp;
+            sampler2D _SpecMap;
+            sampler2D _RampTex;
+            float _TintLayer1_Offset;
+            float _TintLayer2_Offset;
+            float4 _ShadowTint1;
+            float4 _ShadowTint2;
+            float _RimMax;
+            float _RimMin;
+            float _TintLayer1_Softness;
+            float _TintLayer2_Softness;
+            float _SpecSmoothness;
+            float _SpecIntensity;
+            float4 _SpecColor;
+            float _FresnelMin;
+            float _FresnelMax;
+            float _Roughness;
+            samplerCUBE _EnvMap;
+            float4 _EnvMap_HDR;
+            float _EnvIntensity;
+
+            v2f vert (appdata v)
+            {
+                v2f o;
+                o.vertex = UnityObjectToClipPos(v.vertex);
+                o.normalDir=UnityObjectToWorldNormal(v.normal);
+                o.tangentDir=normalize(mul(unity_ObjectToWorld,float4(v.tangent.xyz,0.0)).xyz);
+                o.binormalDir=normalize(cross(o.normalDir,o.tangentDir)*v.tangent.w);
+                o.pos_world=mul(unity_ObjectToWorld,v.vertex).xyz;
+                o.uv = v.uv;
+                return o;
+            }
+
+            fixed4 frag (v2f i) : SV_Target
+            {
+                // 向量计算
+                half3 normalDir=normalize(i.normalDir);
+                half3 tangentDir=normalize(i.tangentDir);
+                half3 binormalDir=normalize(i.binormalDir);
+                half3 lightDir=normalize(_WorldSpaceLightPos0.xyz);
+                half3 viewDir=normalize(_WorldSpaceCameraPos.xyz - i.pos_world);
+
+                //贴图数据
+                half3 base_color=tex2D(_BaseMap,i.uv).rgb;
+                half ao=tex2D(_AOMap,i.uv).r;
+                half4 spec_map=tex2D(_SpecMap,i.uv);
+                half spec_mask=spec_map.b;
+                half spec_roughness=spec_map.a;
+
+                //法线贴图
+                #ifdef _NORMALMAP_ON
+                    float4 normal_map=tex2D(_NormalMap,i.uv);
+                    float3 normal_data=UnpackNormal(normal_map);
+                    float3x3 TBN=float3x3(tangentDir,binormalDir,normalDir);
+                    normalDir=normalize(mul(normal_data,TBN));
+                #endif
+
+                //漫反射
+                half NdotL=dot(normalDir,lightDir);
+                half half_lambert=(NdotL+1)*0.5;
+                half diffuse_term=half_lambert*ao;
+                //     //菲涅尔兰伯特计算-硬高光
+                // half NdotV=saturate(dot(normalDir,viewDir));
+                // half fresnel=1-NdotV;
+                // fresnel=step(_RimMin,fresnel);
+                // half edgeColor=fresnel;
+                            
+                half3 final_diffuse=half3(0,0,0);
+
+                //第一层上色
+                half2 uv_ramp1=half2(diffuse_term+_TintLayer1_Offset,_TintLayer1_Softness);
+                half toon_diffuse1=tex2D(_DiffuseRamp,uv_ramp1).g;
+                half3 tint_color1=lerp(half3(1,1,1), _ShadowTint1.rgb,toon_diffuse1*_ShadowTint1.a);
+                half3 layer1_diffuse=tint_color1*base_color;
+                //二层上色
+                half2 uv_ramp2=half2(diffuse_term+_TintLayer2_Offset,_TintLayer2_Softness);
+                half toon_diffuse2=tex2D(_DiffuseRamp,uv_ramp2).g;
+                half3 tint_color2=lerp(half3(1,1,1), _ShadowTint2.rgb,toon_diffuse2*_ShadowTint2.a);
+                final_diffuse=lerp(layer1_diffuse,tint_color2*base_color,toon_diffuse2);
+
+                //高光
+                half3 H=normalize(lightDir+viewDir);
+                half NdotH=dot(normalDir,H);
+                half spec_term=max(0.0001,pow(NdotH,_SpecSmoothness*spec_roughness))*ao;
+                half3 final_spec=spec_term*_SpecColor*_SpecIntensity*spec_mask;
+
+                //环境反射/边缘光
+                half fresnel=1-dot(normalDir,viewDir);
+                fresnel=smoothstep(_FresnelMin,_FresnelMax,fresnel);
+                half3 reflectDir=reflect(-viewDir,normalDir);
+                float roughness=lerp(0.0,0.95,saturate(_Roughness));
+                roughness=roughness*(1.7-0.7*roughness);
+                float mip_level=roughness*6.0;
+
+                half4 color_cubemap=texCUBElod(_EnvMap,float4(reflectDir,mip_level));
+                half3 env_color=DecodeHDR(color_cubemap,_EnvMap_HDR);
+                half3 final_env=env_color*fresnel*_EnvIntensity*spec_mask;
+
+                // //试试用渐变映射的方式做阴影颜色
+                // half2 uv_ramp1=half2(diffuse_term+_TintLayer1_Offset,0.5);
+                // half4 toon_diffuse1=tex2D(_DiffuseRamp,uv_ramp1);
+                // float gray_value = dot(toon_diffuse1.rgb, fixed3(0.299, 0.587, 0.114));
+                // fixed3 gradient=lerp(tex2D(_RampTex,gray_value).xyz,fixed3(1,1,1),gray_value);
+                // final_diffuse=gradient*base_color;
+                half3 final_color=final_diffuse+final_spec+final_env;
+                return float4(final_color,1);
+            }
+            ENDCG
+        }
+    }
+}
